@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/bin/python3 /usr/lib/kimi-code-arm64/kimi_code_arm64.py "$@"

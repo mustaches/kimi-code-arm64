@@ -1,0 +1,12 @@
+Package: kimi-code-arm64
+Version: 1.1.0
+Section: devel
+Priority: optional
+Architecture: arm64
+Maintainer: Kimi Code ARM64 Packager <localhost>
+Depends: python3 (>= 3.8), python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1, bash, curl, ca-certificates
+Description: Native ARM64 desktop integration for Kimi Code
+ Launches Kimi Code CLI and its web interface in a native GTK window.
+ The CLI is installed online from the official source when first needed.
+ Provides background installation, update detection, one-click upgrades,
+ persistent sessions, and graceful shutdown.

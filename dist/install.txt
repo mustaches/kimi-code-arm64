@@ -1,0 +1,187 @@
+Kimi Code ARM64 安装指南
+========================
+
+软件包：kimi-code-arm64_1.1.0_arm64.deb
+适用范围：ARM64（aarch64/arm64）架构的 Debian / Ubuntu 系统
+安装方式：在线安装，不支持离线安装
+
+一、安装前准备
+--------------
+
+1. 确认目标机器是 ARM64：
+
+   uname -m
+
+   输出应为 aarch64 或 arm64。本软件包不能用于 x86_64 机器。
+
+2. 确认系统为 Debian 或 Ubuntu，并保持网络连接。
+
+   安装时需要联网下载 APT 依赖。首次启动还需要联网下载 Kimi Code CLI，
+   使用 Kimi Code 的模型服务同样需要联网。
+
+3. 将以下文件复制到目标机器的同一目录，例如“下载”目录：
+
+   kimi-code-arm64_1.1.0_arm64.deb
+   kimi-code-arm64_1.1.0_arm64.deb.sha256
+
+二、校验并安装
+--------------
+
+1. 进入软件包所在目录。以下以“下载”目录为例：
+
+   cd ~/下载
+
+   如果系统使用英文目录，则执行：
+
+   cd ~/Downloads
+
+2. 校验软件包完整性：
+
+   sha256sum -c kimi-code-arm64_1.1.0_arm64.deb.sha256
+
+   正常结果应显示：
+
+   kimi-code-arm64_1.1.0_arm64.deb: 确定
+   或：kimi-code-arm64_1.1.0_arm64.deb: OK
+
+   如果校验失败，请重新复制软件包，不要继续安装。
+
+3. 更新 APT 软件索引：
+
+   sudo apt update
+
+4. 安装应用及其依赖：
+
+   sudo apt install ./kimi-code-arm64_1.1.0_arm64.deb
+
+   注意：文件名前面的 ./ 不能省略。APT 会自动安装 Python、GTK、
+   WebKitGTK、curl 等依赖。安装过程需要输入当前用户的管理员密码。
+
+三、首次启动
+------------
+
+1. 在应用列表中找到并启动“Kimi Code ARM64”。
+
+   也可以在终端执行：
+
+   kimi-code-arm64
+
+2. 如果机器已经安装 Kimi Code CLI，应用会直接启动 Web 界面。
+
+3. 如果没有安装 CLI，右上角会显示“安装 Kimi Code CLI”按钮。
+   点击该按钮，应用会在后台执行官方安装程序，自动下载并校验最新版
+   ARM64 CLI。终端窗口保持隐藏，请耐心等待安装完成。
+
+4. CLI 默认安装到：
+
+   ~/.kimi-code/bin/kimi
+
+   不需要另外安装 Node.js。
+
+5. 安装完成后，按照界面提示登录 Kimi 账号或配置模型服务。
+   使用官方模型需要具备相应账号权限或会员权益。
+
+四、版本升级
+------------
+
+1. 应用启动时会自动检查 CLI 更新，运行期间每 6 小时再检查一次。
+
+2. 只有官方版本高于当前版本时，才会显示“升级 Kimi Code CLI”按钮，
+   不会因为重新安装而降级。
+
+3. 点击升级按钮后，应用会依次执行：
+   - 安全停止当前 Web 服务；
+   - 下载并安装更新；
+   - 自动重新启动 Web 服务；
+   - 恢复 Kimi Code 界面。
+
+4. 安装或升级过程中不要强制结束应用。如果暂时无法检查更新，
+   不影响当前版本继续使用，可在网络恢复后重新启动应用检查。
+
+五、退出应用
+------------
+
+点击右上角的“退出kimi code”按钮，等待应用保存会话并关闭本地服务。
+
+点击窗口原生关闭按钮也会执行安全退出。请勿在升级过程中强制杀进程。
+
+六、卸载
+--------
+
+仅卸载图形应用：
+
+   sudo apt remove kimi-code-arm64
+
+卸载应用不会自动删除以下目录中的 CLI、账号配置和会话记录：
+
+   ~/.kimi-code
+
+如需删除这些数据，请先备份。不要手工编辑 sessions 目录中的会话文件。
+
+七、注意事项
+------------
+
+- 本应用是 Kimi Code CLI + Web 的原生 ARM64 图形集成外壳，
+  不是 Kimi 官方 Desktop 安装包。
+- 软件包不包含 CLI；首次安装和后续升级均需要联网。
+- 当前只提供 Debian / Ubuntu 的 DEB 包，不支持 Fedora、RHEL、Alpine、
+  Windows 或 macOS。
+- 本地 Web 服务仅监听 127.0.0.1，并使用临时访问令牌，不会主动开放
+  局域网访问。
+- 安装和升级使用 Kimi Code 官方下载源，并由官方脚本校验 CLI 文件。
+
+八、故障排查
+------------
+
+1. APT 提示依赖问题：
+
+   sudo apt update
+   sudo apt --fix-broken install
+   sudo apt install ./kimi-code-arm64_1.1.0_arm64.deb
+
+   如果出现以下提示，但前面已经显示“正在设置 kimi-code-arm64”，
+   这不是安装失败，而是 APT 的沙盒用户 _apt 无权读取当前目录，
+   APT 已自动改用 root 读取本地软件包：
+
+   N: 由于文件 ... 无法被用户 '_apt' 访问，已脱离沙盒并提权为根用户
+
+   可以检查安装状态：
+
+   dpkg-query -W -f='${Status}\n' kimi-code-arm64
+
+   应输出：install ok installed
+
+   如果希望避免该提示，可将软件包复制到 /tmp 后再安装：
+
+   cp kimi-code-arm64_1.1.0_arm64.deb /tmp/
+   cd /tmp
+   sudo apt install ./kimi-code-arm64_1.1.0_arm64.deb
+
+2. 已安装 CLI，但应用仍提示未安装：
+
+   检查以下命令是否能执行：
+
+   kimi --version
+
+   或检查默认路径是否存在：
+
+   ~/.kimi-code/bin/kimi --version
+
+3. CLI 安装失败：
+
+   检查网络、DNS 和代理设置，确认可以访问：
+
+   https://code.kimi.com/kimi-code/latest
+
+   安装日志位于：
+
+   ~/.cache/kimi-code-arm64/cli-install.log
+
+4. Web 启动失败：
+
+   查看日志：
+
+   ~/.cache/kimi-code-arm64/server.log
+
+5. 如果升级失败，应用会尝试恢复原有 CLI 和 Web 服务。请保留上述日志，
+   以便进一步排查。

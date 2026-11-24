@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Kimi Code ARM64
+Comment=Native ARM64 launcher for Kimi Code Web
+Exec=kimi-code-arm64
+Icon=kimi-code-arm64
+Terminal=false
+Categories=Development;IDE;
+StartupNotify=true
+StartupWMClass=kimi-code-arm64
