@@ -38,6 +38,22 @@ ARM64 用户通常只能使用终端界面，存在以下不便：
 - 适配不同 Linux 用户名，不硬编码用户主目录。
 - 针对部分 NVIDIA ARM64 设备的 WebKit 渲染问题，默认禁用 DMA-BUF 和硬件合成。
 
+### 可选 Chrome 应用窗口后端（1.3.0 新增）
+
+部分设备上 WebKitGTK 与 Kimi Web 的虚拟滚动列表存在兼容性问题（滚动跳变、回滚）。1.3.0 起可以改用本机已安装的 Chrome / Chromium 作为界面后端：
+
+```bash
+KIMI_CODE_ARM64_BACKEND=chrome kimi-code-arm64
+```
+
+- 界面在与官方浏览器一致的环境中运行，滚动、渲染行为与直接用浏览器打开 `kimi web` 相同。
+- 使用独立配置目录 `~/.cache/kimi-code-arm64/chrome-profile`，不影响日常 Chrome 配置；首次打开需完成一次欢迎向导。
+- 关闭 Chrome 窗口或 GTK 状态窗口都会触发同样的安全退出流程，本地服务随窗口关闭。
+- 此模式下输入框的“截屏”按钮不可用（截屏桥接仅在 WebKit 模式提供），其余会话、账号、升级功能一致。
+- 未安装 Chrome / Chromium 时自动回退到 WebKit 模式。
+
+如需永久启用，将应用菜单启动命令改为 `env KIMI_CODE_ARM64_BACKEND=chrome kimi-code-arm64`，或在 `~/.local/share/applications/` 中放置同名 desktop 文件覆盖。
+
 ### 自动安装 Kimi Code CLI
 
 - 启动时自动检测 `~/.kimi-code/bin/kimi` 和 `PATH` 中的 CLI。
@@ -113,8 +129,8 @@ cd kimi-code-arm64/dist
 也可以只将以下三个文件下载或复制到目标机器的同一目录：
 
 ```text
-kimi-code-arm64_1.2.0_arm64.deb
-kimi-code-arm64_1.2.0_arm64.deb.sha256
+kimi-code-arm64_1.3.0_arm64.deb
+kimi-code-arm64_1.3.0_arm64.deb.sha256
 install.txt
 ```
 
@@ -141,7 +157,7 @@ arm64
 在 DEB 和 SHA-256 文件所在目录执行：
 
 ```bash
-sha256sum -c kimi-code-arm64_1.2.0_arm64.deb.sha256
+sha256sum -c kimi-code-arm64_1.3.0_arm64.deb.sha256
 ```
 
 应显示 `OK` 或“确定/成功”。如果校验失败，请重新获取安装包，不要继续安装。
@@ -152,9 +168,9 @@ sha256sum -c kimi-code-arm64_1.2.0_arm64.deb.sha256
 
 ```bash
 sudo apt update
-install -m 0644 kimi-code-arm64_1.2.0_arm64.deb /tmp/
-sudo apt install /tmp/kimi-code-arm64_1.2.0_arm64.deb
-rm -f /tmp/kimi-code-arm64_1.2.0_arm64.deb
+install -m 0644 kimi-code-arm64_1.3.0_arm64.deb /tmp/
+sudo apt install /tmp/kimi-code-arm64_1.3.0_arm64.deb
+rm -f /tmp/kimi-code-arm64_1.3.0_arm64.deb
 ```
 
 不需要关闭 APT 沙箱。APT 会安装 Python、PyGObject、GTK、WebKitGTK、GNOME 截图工具、curl 和证书等依赖。
@@ -230,7 +246,7 @@ cd kimi-code-arm64
 构建结果：
 
 ```text
-dist/kimi-code-arm64_1.2.0_arm64.deb
+dist/kimi-code-arm64_1.3.0_arm64.deb
 ```
 
 DEB 不包含 CLI。首次启动后由应用在线安装官方 CLI，因此分发包体积较小。
@@ -247,21 +263,29 @@ kimi-code-arm64/
 │   ├── control                 # DEB 元数据和运行依赖
 │   └── kimi-code-arm64         # 系统启动命令
 └── dist/
-    ├── kimi-code-arm64_1.2.0_arm64.deb
-    ├── kimi-code-arm64_1.2.0_arm64.deb.sha256
+    ├── kimi-code-arm64_1.3.0_arm64.deb
+    ├── kimi-code-arm64_1.3.0_arm64.deb.sha256
     └── install.txt             # 独立安装说明
 ```
 
 ## 故障排查
+
+### 主对话框滚轮滚动卡顿、跳变或回滚
+
+1.2.1 起默认关闭 WebKitGTK 的平滑滚动动画。该动画会与 Kimi Web 聊天列表在 scroll 事件中的 `scrollTop` 校正相互打断，表现为每格滚轮只移动几像素、向下滚动被回滚。关闭后每格滚动步长稳定。
+
+如需恢复系统默认行为，启动前设置环境变量 `KIMI_CODE_ARM64_SMOOTH_SCROLL=1`。
+
+若滚动仍不稳定（虚拟列表在 WebKitGTK 下的兼容性问题），可改用 `KIMI_CODE_ARM64_BACKEND=chrome` 的 Chrome 应用窗口后端，行为与官方浏览器一致。
 
 ### APT 依赖问题
 
 ```bash
 sudo apt update
 sudo apt --fix-broken install
-install -m 0644 kimi-code-arm64_1.2.0_arm64.deb /tmp/
-sudo apt install /tmp/kimi-code-arm64_1.2.0_arm64.deb
-rm -f /tmp/kimi-code-arm64_1.2.0_arm64.deb
+install -m 0644 kimi-code-arm64_1.3.0_arm64.deb /tmp/
+sudo apt install /tmp/kimi-code-arm64_1.3.0_arm64.deb
+rm -f /tmp/kimi-code-arm64_1.3.0_arm64.deb
 ```
 
 ### `_apt` 无权读取本地 DEB

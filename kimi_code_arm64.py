@@ -24,7 +24,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gio, GLib, Gtk, WebKit2
 
 APP_ID = "com.kimi.CodeARM64"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 INSTALL_URL = "https://code.kimi.com/kimi-code/install.sh"
 LATEST_URL = "https://code.kimi.com/kimi-code/latest"
 APP_DATA = Path.home() / ".local/share/kimi-code-arm64"
@@ -103,6 +103,14 @@ def discover_kimi():
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate.resolve()
+    return None
+
+
+def discover_chrome():
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        path = shutil.which(name)
+        if path:
+            return path
     return None
 
 
@@ -354,6 +362,10 @@ class KimiWindow(Gtk.ApplicationWindow):
             web_context=context,
             user_content_manager=content_manager,
         )
+        settings = self.webview.get_settings()
+        settings.set_enable_smooth_scrolling(
+            os.environ.get("KIMI_CODE_ARM64_SMOOTH_SCROLL") == "1"
+        )
         self.add(self.webview)
         self.connect("delete-event", self._on_delete)
 
@@ -503,7 +515,16 @@ class KimiWindow(Gtk.ApplicationWindow):
         if self.application.operation != "exit":
             uri = urllib.parse.urlsplit(url)
             self.server_origin = (uri.scheme, uri.hostname, uri.port)
-            self.webview.load_uri(url)
+            if self.application.backend == "chrome":
+                self.webview.load_html(page_html(
+                    "Kimi Web 已在 Chrome 应用窗口中打开",
+                    "使用 Chrome 窗口阅读与会话。关闭 Chrome 窗口或点击右上角“退出kimi code”均可安全退出。",
+                    False,
+                ), None)
+                self.header.set_subtitle("Chrome 应用窗口模式 · 截屏按钮在此模式下不可用")
+                self.application.launch_chrome(url)
+            else:
+                self.webview.load_uri(url)
             self.action_button.set_sensitive(True)
             self.action_button.set_label("退出kimi code")
         return False
@@ -542,11 +563,18 @@ class KimiApplication(Gtk.Application):
         self.latest = None
         self.operation = None
         self.checking_updates = False
+        self.backend = os.environ.get("KIMI_CODE_ARM64_BACKEND", "webkit").strip().lower()
+        self.chrome = None
+        self.chrome_binary = None
 
     def do_activate(self):
         if self.window is not None:
             self.window.present()
             return
+        if self.backend == "chrome":
+            self.chrome_binary = discover_chrome()
+            if not self.chrome_binary:
+                self.backend = "webkit"
         self.window = KimiWindow(self)
         self.window.show_all()
         self.window.update_button.hide()
@@ -575,6 +603,38 @@ class KimiApplication(Gtk.Application):
         self.server.start()
         if check:
             self.check_updates()
+
+    def launch_chrome(self, url):
+        if self.chrome and self.chrome.poll() is None:
+            self.chrome.terminate()
+        profile = APP_CACHE / "chrome-profile"
+        profile.mkdir(parents=True, exist_ok=True)
+        self.chrome = subprocess.Popen(
+            [
+                self.chrome_binary,
+                f"--app={url}",
+                f"--user-data-dir={profile}",
+                "--window-size=1280,800",
+                "--no-first-run",
+                "--disable-session-crashed-bubble",
+                "--disable-features=Translate",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        threading.Thread(target=self._wait_chrome, daemon=True).start()
+
+    def _wait_chrome(self):
+        process = self.chrome
+        process.wait()
+        if self.operation != "exit" and self.chrome is process:
+            GLib.idle_add(self._chrome_exited)
+
+    def _chrome_exited(self):
+        self.request_exit()
+        return False
 
     def install_cli(self):
         if self.operation:
@@ -692,6 +752,8 @@ class KimiApplication(Gtk.Application):
             return
         self.operation = "exit"
         self.window.show_operation("正在安全退出", "正在保存会话并关闭本地 Kimi Web 服务…", "正在安全退出…")
+        if self.chrome and self.chrome.poll() is None:
+            self.chrome.terminate()
         if self.server:
             self.server.stop(self.finish_exit)
         else:
