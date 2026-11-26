@@ -66,10 +66,16 @@ ARM64 用户通常只能使用终端界面，存在以下不便：
 
 为避免会话占用冲突，不建议 CLI 和 Web 同时向同一会话发送任务。
 
+### 区域截屏
+
+- 输入框的“添加”菜单提供“截屏”入口。
+- 点击后使用系统截图工具框选区域，截图会自动作为 PNG 附件添加到当前输入框。
+- 按 Esc 或取消系统截图选择时不会添加附件。
+- 临时截图在读取后立即删除，不会残留在应用缓存中。
+
 ### 安全退出
 
-- 右上角提供“退出kimi code”按钮。
-- 点击窗口原生关闭按钮也会执行相同的安全退出流程。
+- 点击窗口右上角的原生关闭按钮即可执行安全退出流程。
 - 优先调用经过认证的本地关闭接口，再使用 SIGTERM，最后才强制结束应用自己启动的进程。
 - 支持 SIGTERM 和 SIGINT，降低注销或外部结束应用时遗留 Web 子进程的风险。
 - 不会关闭不属于当前应用的其他 Kimi Web 实例。
@@ -107,8 +113,8 @@ cd kimi-code-arm64/dist
 也可以只将以下三个文件下载或复制到目标机器的同一目录：
 
 ```text
-kimi-code-arm64_1.1.0_arm64.deb
-kimi-code-arm64_1.1.0_arm64.deb.sha256
+kimi-code-arm64_1.2.0_arm64.deb
+kimi-code-arm64_1.2.0_arm64.deb.sha256
 install.txt
 ```
 
@@ -135,19 +141,23 @@ arm64
 在 DEB 和 SHA-256 文件所在目录执行：
 
 ```bash
-sha256sum -c kimi-code-arm64_1.1.0_arm64.deb.sha256
+sha256sum -c kimi-code-arm64_1.2.0_arm64.deb.sha256
 ```
 
 应显示 `OK` 或“确定/成功”。如果校验失败，请重新获取安装包，不要继续安装。
 
 ### 4. 安装应用及依赖
 
+为避免 APT 的沙箱用户 `_apt` 无权读取用户主目录而出现权限提示，先以 `0644` 权限将 DEB 复制到 `/tmp`，再从该路径安装：
+
 ```bash
 sudo apt update
-sudo apt install ./kimi-code-arm64_1.1.0_arm64.deb
+install -m 0644 kimi-code-arm64_1.2.0_arm64.deb /tmp/
+sudo apt install /tmp/kimi-code-arm64_1.2.0_arm64.deb
+rm -f /tmp/kimi-code-arm64_1.2.0_arm64.deb
 ```
 
-注意文件名前的 `./` 不能省略。APT 会安装 Python、PyGObject、GTK、WebKitGTK、curl 和证书等依赖。
+不需要关闭 APT 沙箱。APT 会安装 Python、PyGObject、GTK、WebKitGTK、GNOME 截图工具、curl 和证书等依赖。
 
 ## 首次启动
 
@@ -187,13 +197,9 @@ CLI 默认安装位置：
 
 ## 安全退出
 
-点击右上角：
+点击窗口右上角的原生关闭按钮，等待应用保存会话并关闭本地 Web 服务。
 
-```text
-退出kimi code
-```
-
-等待应用保存会话并关闭本地 Web 服务。点击窗口原生关闭按钮也会执行相同流程。
+安全退出会优先调用经过认证的本地关闭接口，必要时再结束后台进程。
 
 ## 卸载
 
@@ -224,7 +230,7 @@ cd kimi-code-arm64
 构建结果：
 
 ```text
-dist/kimi-code-arm64_1.1.0_arm64.deb
+dist/kimi-code-arm64_1.2.0_arm64.deb
 ```
 
 DEB 不包含 CLI。首次启动后由应用在线安装官方 CLI，因此分发包体积较小。
@@ -241,8 +247,8 @@ kimi-code-arm64/
 │   ├── control                 # DEB 元数据和运行依赖
 │   └── kimi-code-arm64         # 系统启动命令
 └── dist/
-    ├── kimi-code-arm64_1.1.0_arm64.deb
-    ├── kimi-code-arm64_1.1.0_arm64.deb.sha256
+    ├── kimi-code-arm64_1.2.0_arm64.deb
+    ├── kimi-code-arm64_1.2.0_arm64.deb.sha256
     └── install.txt             # 独立安装说明
 ```
 
@@ -253,7 +259,9 @@ kimi-code-arm64/
 ```bash
 sudo apt update
 sudo apt --fix-broken install
-sudo apt install ./kimi-code-arm64_1.1.0_arm64.deb
+install -m 0644 kimi-code-arm64_1.2.0_arm64.deb /tmp/
+sudo apt install /tmp/kimi-code-arm64_1.2.0_arm64.deb
+rm -f /tmp/kimi-code-arm64_1.2.0_arm64.deb
 ```
 
 ### `_apt` 无权读取本地 DEB

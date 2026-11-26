@@ -1,7 +1,7 @@
 Kimi Code ARM64 安装指南
 ========================
 
-软件包：kimi-code-arm64_1.1.0_arm64.deb
+软件包：kimi-code-arm64_1.2.0_arm64.deb
 适用范围：ARM64（aarch64/arm64）架构的 Debian / Ubuntu 系统
 安装方式：在线安装，不支持离线安装
 
@@ -21,8 +21,9 @@ Kimi Code ARM64 安装指南
 
 3. 将以下文件复制到目标机器的同一目录，例如“下载”目录：
 
-   kimi-code-arm64_1.1.0_arm64.deb
-   kimi-code-arm64_1.1.0_arm64.deb.sha256
+   kimi-code-arm64_1.2.0_arm64.deb
+   kimi-code-arm64_1.2.0_arm64.deb.sha256
+   install-1.2.0.sh
 
 二、校验并安装
 --------------
@@ -35,27 +36,46 @@ Kimi Code ARM64 安装指南
 
    cd ~/Downloads
 
-2. 校验软件包完整性：
+2. 推荐使用一键安装脚本：
 
-   sha256sum -c kimi-code-arm64_1.1.0_arm64.deb.sha256
+   chmod +x install-1.2.0.sh
+   ./install-1.2.0.sh
+
+   请使用普通用户运行，不要对整个脚本使用 sudo。需要管理员权限时，
+   脚本会自行调用 sudo 并提示输入密码。
+
+   脚本会自动扫描旧版和更高版本、卸载 DPKG 管理的 1.1.0、清理已知
+   残留文件、校验 DEB、从 /tmp 安装并验证最终版本。发现高于 1.2.0
+   的版本时，脚本会提示版本和路径，不做任何修改并直接退出。
+   脚本不会删除 ~/.kimi-code 或 WebKit 网页数据。
+
+3. 也可以手工校验并安装。首先校验软件包完整性：
+
+   sha256sum -c kimi-code-arm64_1.2.0_arm64.deb.sha256
 
    正常结果应显示：
 
-   kimi-code-arm64_1.1.0_arm64.deb: 确定
-   或：kimi-code-arm64_1.1.0_arm64.deb: OK
+   kimi-code-arm64_1.2.0_arm64.deb: 确定
+   或：kimi-code-arm64_1.2.0_arm64.deb: OK
 
    如果校验失败，请重新复制软件包，不要继续安装。
 
-3. 更新 APT 软件索引：
+4. 更新 APT 软件索引：
 
    sudo apt update
 
-4. 安装应用及其依赖：
+5. 为避免 APT 的沙箱用户 _apt 无权读取用户主目录而出现权限提示，
+   先以 0644 权限将 DEB 复制到 /tmp：
 
-   sudo apt install ./kimi-code-arm64_1.1.0_arm64.deb
+   install -m 0644 kimi-code-arm64_1.2.0_arm64.deb /tmp/
 
-   注意：文件名前面的 ./ 不能省略。APT 会自动安装 Python、GTK、
-   WebKitGTK、curl 等依赖。安装过程需要输入当前用户的管理员密码。
+6. 从 /tmp 安装应用及其依赖，安装后删除临时副本：
+
+   sudo apt install /tmp/kimi-code-arm64_1.2.0_arm64.deb
+   rm -f /tmp/kimi-code-arm64_1.2.0_arm64.deb
+
+   不需要关闭 APT 沙箱。APT 会自动安装 Python、GTK、WebKitGTK、
+   GNOME 截图工具、curl 等依赖。安装过程需要输入当前用户的管理员密码。
 
 三、首次启动
 ------------
@@ -65,6 +85,9 @@ Kimi Code ARM64 安装指南
    也可以在终端执行：
 
    kimi-code-arm64
+
+   启动后顶部标题显示“Kimi Code Frame(1.2.0)”。标题版本号动态读取
+   APP_VERSION，后续应用升级时会随版本号自动更新。
 
 2. 如果机器已经安装 Kimi Code CLI，应用会直接启动 Web 界面。
 
@@ -80,6 +103,9 @@ Kimi Code ARM64 安装指南
 
 5. 安装完成后，按照界面提示登录 Kimi 账号或配置模型服务。
    使用官方模型需要具备相应账号权限或会员权益。
+
+6. 需要截屏时，点击输入框的“添加”并选择“截屏”，然后框选屏幕区域。
+   截图会自动作为 PNG 附件添加到输入框；取消框选则不会添加附件。
 
 四、版本升级
 ------------
@@ -101,9 +127,9 @@ Kimi Code ARM64 安装指南
 五、退出应用
 ------------
 
-点击右上角的“退出kimi code”按钮，等待应用保存会话并关闭本地服务。
+点击窗口右上角的原生关闭按钮，等待应用保存会话并关闭本地服务。
 
-点击窗口原生关闭按钮也会执行安全退出。请勿在升级过程中强制杀进程。
+关闭窗口会执行安全退出。请勿在升级过程中强制杀进程。
 
 六、卸载
 --------
@@ -137,7 +163,9 @@ Kimi Code ARM64 安装指南
 
    sudo apt update
    sudo apt --fix-broken install
-   sudo apt install ./kimi-code-arm64_1.1.0_arm64.deb
+   install -m 0644 kimi-code-arm64_1.2.0_arm64.deb /tmp/
+   sudo apt install /tmp/kimi-code-arm64_1.2.0_arm64.deb
+   rm -f /tmp/kimi-code-arm64_1.2.0_arm64.deb
 
    如果出现以下提示，但前面已经显示“正在设置 kimi-code-arm64”，
    这不是安装失败，而是 APT 的沙盒用户 _apt 无权读取当前目录，
@@ -153,9 +181,9 @@ Kimi Code ARM64 安装指南
 
    如果希望避免该提示，可将软件包复制到 /tmp 后再安装：
 
-   cp kimi-code-arm64_1.1.0_arm64.deb /tmp/
-   cd /tmp
-   sudo apt install ./kimi-code-arm64_1.1.0_arm64.deb
+   install -m 0644 kimi-code-arm64_1.2.0_arm64.deb /tmp/
+   sudo apt install /tmp/kimi-code-arm64_1.2.0_arm64.deb
+   rm -f /tmp/kimi-code-arm64_1.2.0_arm64.deb
 
 2. 已安装 CLI，但应用仍提示未安装：
 

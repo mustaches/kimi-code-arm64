@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import html
 import json
 import os
@@ -23,11 +24,71 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gio, GLib, Gtk, WebKit2
 
 APP_ID = "com.kimi.CodeARM64"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 INSTALL_URL = "https://code.kimi.com/kimi-code/install.sh"
 LATEST_URL = "https://code.kimi.com/kimi-code/latest"
 APP_DATA = Path.home() / ".local/share/kimi-code-arm64"
 APP_CACHE = Path.home() / ".cache/kimi-code-arm64"
+
+SCREENSHOT_BRIDGE = r"""
+(() => {
+    const requests = new Map();
+    const desktopRequests = new Map();
+    let nextId = 0;
+    const desktop = window.kimiDesktop || {};
+    desktop.isFullscreen = () => Promise.resolve(false);
+    desktop.onFullscreenChanged = () => () => {};
+    desktop.onQuitConfirm = () => () => {};
+    desktop.onQuitConfirmCancel = () => () => {};
+    desktop.isScreenshotSupported = () => true;
+    desktop.captureScreenshot = () => new Promise((resolve) => {
+        const id = ++nextId;
+        requests.set(id, resolve);
+        try {
+            window.webkit.messageHandlers.kimiCodeScreenshot.postMessage(id);
+        } catch (_) {
+            requests.delete(id);
+            resolve({status: "error"});
+        }
+    });
+    const requestDesktop = (payload) => new Promise((resolve) => {
+        const id = ++nextId;
+        desktopRequests.set(id, resolve);
+        try {
+            window.webkit.messageHandlers.kimiCodeScreenshot.postMessage({...payload, id});
+        } catch (_) {
+            desktopRequests.delete(id);
+            resolve(null);
+        }
+    });
+    desktop.openExternal = (url) => requestDesktop({action: "openExternal", url})
+        .then((result) => result === true);
+    desktop.showOpenDialog = (options) => requestDesktop({action: "showOpenDialog", options})
+        .then((result) => result || {canceled: true, filePaths: []});
+    window.kimiDesktop = desktop;
+    window.__kimiCodeResolveDesktop = (id, result) => {
+        const resolve = desktopRequests.get(id);
+        if (!resolve) return;
+        desktopRequests.delete(id);
+        resolve(result);
+    };
+    window.__kimiCodeResolveScreenshot = (id, result) => {
+        const resolve = requests.get(id);
+        if (!resolve) return;
+        requests.delete(id);
+        if (result.status !== "ok") {
+            resolve({status: result.status});
+            return;
+        }
+        const binary = atob(result.png);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index++) {
+            bytes[index] = binary.charCodeAt(index);
+        }
+        resolve({status: "ok", captureId: String(id), pngBytes: bytes, comment: ""});
+    };
+})();
+"""
 
 
 def discover_kimi():
@@ -248,10 +309,14 @@ class KimiWindow(Gtk.ApplicationWindow):
     def __init__(self, application):
         super().__init__(application=application)
         self.application = application
-        self.set_title("Kimi Code ARM64")
+        self.server_origin = None
+        self.set_title(f"Kimi Code Frame({APP_VERSION})")
         self.set_default_size(1280, 800)
 
-        self.header = Gtk.HeaderBar(title="Kimi Code", subtitle="ARM64 桌面集成")
+        self.header = Gtk.HeaderBar(
+            title=f"Kimi Code Frame({APP_VERSION})",
+            subtitle="ARM64 桌面集成",
+        )
         self.header.set_show_close_button(True)
         self.update_button = Gtk.Button(label="升级 Kimi Code CLI")
         self.update_button.get_style_context().add_class("suggested-action")
@@ -261,6 +326,7 @@ class KimiWindow(Gtk.ApplicationWindow):
         self.action_button = Gtk.Button(label="退出kimi code")
         self.action_button.get_style_context().add_class("destructive-action")
         self.action_button.connect("clicked", lambda *_args: application.primary_action())
+        self.action_button.set_no_show_all(True)
         self.header.pack_end(self.action_button)
         self.set_titlebar(self.header)
 
@@ -273,12 +339,138 @@ class KimiWindow(Gtk.ApplicationWindow):
             base_cache_directory=str(cache_dir),
         )
         context = WebKit2.WebContext(website_data_manager=data_manager)
-        self.webview = WebKit2.WebView(web_context=context)
+        content_manager = WebKit2.UserContentManager()
+        content_manager.register_script_message_handler("kimiCodeScreenshot")
+        content_manager.add_script(WebKit2.UserScript(
+            SCREENSHOT_BRIDGE,
+            WebKit2.UserContentInjectedFrames.TOP_FRAME,
+            WebKit2.UserScriptInjectionTime.START,
+        ))
+        content_manager.connect(
+            "script-message-received::kimiCodeScreenshot",
+            self._on_screenshot_request,
+        )
+        self.webview = WebKit2.WebView(
+            web_context=context,
+            user_content_manager=content_manager,
+        )
         self.add(self.webview)
         self.connect("delete-event", self._on_delete)
 
+    def _on_screenshot_request(self, _manager, message):
+        uri = urllib.parse.urlsplit(self.webview.get_uri() or "")
+        if (uri.scheme, uri.hostname, uri.port) != self.server_origin:
+            return
+        try:
+            request = json.loads(message.get_js_value().to_json(0))
+        except (TypeError, ValueError):
+            return
+        if isinstance(request, int):
+            threading.Thread(
+                target=self._capture_screenshot,
+                args=(request,),
+                daemon=True,
+            ).start()
+            return
+        if not isinstance(request, dict) or not isinstance(request.get("id"), int):
+            return
+        request_id = request["id"]
+        action = request.get("action")
+        if action == "openExternal":
+            threading.Thread(
+                target=self._open_external,
+                args=(request_id, request.get("url")),
+                daemon=True,
+            ).start()
+        elif action == "showOpenDialog":
+            self._show_open_dialog(request_id, request.get("options") or {})
+
+    def _open_external(self, request_id, url):
+        try:
+            uri = urllib.parse.urlsplit(url)
+            if uri.scheme not in {"http", "https"} or not uri.hostname:
+                result = False
+            else:
+                result = Gio.AppInfo.launch_default_for_uri(url, None)
+        except (AttributeError, TypeError, GLib.Error):
+            result = False
+        GLib.idle_add(self._resolve_desktop, request_id, result)
+
+    def _show_open_dialog(self, request_id, options):
+        properties = options.get("properties") or []
+        open_directory = "openDirectory" in properties
+        action = (
+            Gtk.FileChooserAction.SELECT_FOLDER
+            if open_directory
+            else Gtk.FileChooserAction.OPEN
+        )
+        dialog = Gtk.FileChooserNative.new(
+            str(options.get("title") or "选择文件"),
+            self,
+            action,
+            "选择",
+            "取消",
+        )
+        dialog.set_select_multiple("multiSelections" in properties)
+        dialog.set_show_hidden("showHiddenFiles" in properties)
+        default_path = options.get("defaultPath")
+        if default_path:
+            dialog.set_filename(str(default_path))
+        response = dialog.run()
+        paths = list(dialog.get_filenames()) if response == Gtk.ResponseType.ACCEPT else []
+        dialog.destroy()
+        self._resolve_desktop(request_id, {
+            "canceled": response != Gtk.ResponseType.ACCEPT,
+            "filePaths": paths,
+        })
+
+    def _resolve_desktop(self, request_id, result):
+        script = (
+            f"window.__kimiCodeResolveDesktop?.("
+            f"{json.dumps(request_id)}, {json.dumps(result)});"
+        )
+        self.webview.evaluate_javascript(script, len(script), None, None, None)
+        return False
+
+    def _capture_screenshot(self, request_id):
+        path = APP_CACHE / f"screenshot-{time.time_ns()}.png"
+        try:
+            completed = subprocess.run(
+                ["gnome-screenshot", "--area", "--file", str(path)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=300,
+            )
+            if completed.returncode != 0:
+                result = {"status": "error"}
+            elif not path.is_file():
+                result = {"status": "cancel"}
+            else:
+                result = {
+                    "status": "ok",
+                    "png": base64.b64encode(path.read_bytes()).decode("ascii"),
+                }
+        except (OSError, subprocess.SubprocessError):
+            result = {"status": "error"}
+        finally:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        GLib.idle_add(self._resolve_screenshot, request_id, result)
+
+    def _resolve_screenshot(self, request_id, result):
+        script = (
+            f"window.__kimiCodeResolveScreenshot?.("
+            f"{json.dumps(request_id)}, {json.dumps(result)});"
+        )
+        self.webview.evaluate_javascript(script, len(script), None, None, None)
+        return False
+
     def show_missing(self, message=""):
         self.update_button.hide()
+        self.action_button.show()
         self.action_button.set_sensitive(True)
         self.action_button.set_label("安装 Kimi Code CLI")
         self.action_button.get_style_context().remove_class("destructive-action")
@@ -288,6 +480,7 @@ class KimiWindow(Gtk.ApplicationWindow):
         self.webview.load_html(page_html("尚未安装 Kimi Code CLI", detail, False), None)
 
     def show_starting(self):
+        self.action_button.hide()
         self.action_button.set_sensitive(True)
         self.action_button.set_label("退出kimi code")
         self.action_button.get_style_context().add_class("destructive-action")
@@ -308,6 +501,8 @@ class KimiWindow(Gtk.ApplicationWindow):
 
     def server_ready(self, url):
         if self.application.operation != "exit":
+            uri = urllib.parse.urlsplit(url)
+            self.server_origin = (uri.scheme, uri.hostname, uri.port)
             self.webview.load_uri(url)
             self.action_button.set_sensitive(True)
             self.action_button.set_label("退出kimi code")
