@@ -1,5 +1,5 @@
 Package: kimi-code-arm64
-Version: 2.0.3
+Version: 2.0.10
 Section: devel
 Priority: optional
 Architecture: arm64

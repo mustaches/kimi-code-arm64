@@ -21,7 +21,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gio, GLib, Gtk
 
 APP_ID = "com.kimi.CodeARM64"
-APP_VERSION = "2.0.3"
+APP_VERSION = "2.0.10"
 INSTALL_URL = "https://code.kimi.com/kimi-code/install.sh"
 LATEST_URL = "https://code.kimi.com/kimi-code/latest"
 APP_CACHE = Path.home() / ".cache/kimi-code-arm64"
@@ -197,14 +197,14 @@ class KimiServer:
         if process is not None and process.poll() is None:
             self._request_shutdown()
             try:
-                process.wait(timeout=8)
+                process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 process.terminate()
                 try:
-                    process.wait(timeout=5)
+                    process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.wait()
+                    process.wait(timeout=1)
         if process is not None and process.stdout is not None:
             process.stdout.close()
         if self.log is not None:
@@ -221,7 +221,7 @@ class KimiServer:
             headers={"Authorization": f"Bearer {self.token}"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=3):
+            with urllib.request.urlopen(request, timeout=2):
                 pass
         except Exception:
             pass
@@ -385,7 +385,7 @@ class KimiApplication(Gtk.Application):
 
     def do_activate(self):
         if self.window is not None:
-            self.window.present()
+            self._present_conversation()
             return
         self.chrome_binary = discover_chrome()
         self.window = KimiWindow(self)
@@ -404,6 +404,25 @@ class KimiApplication(Gtk.Application):
         GLib.timeout_add_seconds(21600, self._periodic_update_check)
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self._on_unix_signal)
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, self._on_unix_signal)
+
+    def _present_conversation(self):
+        if self.chrome and self.chrome.poll() is None:
+            self.window.hide()
+            try:
+                subprocess.run(
+                    [
+                        "xdotool", "search", "--onlyvisible", "--pid", str(self.chrome.pid),
+                        "windowraise", "windowactivate",
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+            except OSError:
+                pass
+        else:
+            self.window.present()
 
     def _on_unix_signal(self):
         self.request_exit()
@@ -437,9 +456,11 @@ class KimiApplication(Gtk.Application):
         )
 
     def _display_title(self):
+        parts = []
         if self.cli_version:
-            return f"Kimi Code {self.cli_version}"
-        return f"Kimi Code Frame({APP_VERSION})"
+            parts.append(f"Kimi Code {self.cli_version}")
+        parts.append(f"Frame {APP_VERSION}")
+        return " · ".join(parts)
 
     def _read_cli_version(self):
         self.cli_version = None
@@ -483,6 +504,7 @@ class KimiApplication(Gtk.Application):
         self.chrome = subprocess.Popen(
             [
                 self.chrome_binary,
+                "--class=kimi-code-arm64",
                 f"--app={initial_url}",
                 f"--user-data-dir={profile}",
                 f"--remote-debugging-port={debug_port}",
@@ -676,6 +698,8 @@ class KimiApplication(Gtk.Application):
             return
         self.operation = "exit"
         self.window.show_operation("正在安全退出", "正在保存会话并关闭本地 Kimi Web 服务…", "正在安全退出…")
+        if self.cdp:
+            self.cdp.stop()
         if self.chrome and self.chrome.poll() is None:
             self.chrome.terminate()
         if self.server:

@@ -1,7 +1,7 @@
 Kimi Code ARM64 安装指南
 ========================
 
-软件包：kimi-code-arm64_2.0.3_arm64.deb
+软件包：kimi-code-arm64_2.0.10_arm64.deb
 适用范围：ARM64（aarch64/arm64）架构的 Debian / Ubuntu 系统
 安装方式：在线安装，不支持离线安装
 
@@ -21,9 +21,9 @@ Kimi Code ARM64 安装指南
 
 3. 将以下文件复制到目标机器的同一目录，例如“下载”目录：
 
-   kimi-code-arm64_2.0.3_arm64.deb
-   kimi-code-arm64_2.0.3_arm64.deb.sha256
-   install-2.0.3.sh
+   kimi-code-arm64_2.0.10_arm64.deb
+   kimi-code-arm64_2.0.10_arm64.deb.sha256
+   install-2.0.10.sh
 
 二、校验并安装
 --------------
@@ -38,25 +38,25 @@ Kimi Code ARM64 安装指南
 
 2. 推荐使用一键安装脚本：
 
-   chmod +x install-2.0.3.sh
-   ./install-2.0.3.sh
+   chmod +x install-2.0.10.sh
+   ./install-2.0.10.sh
 
    请使用普通用户运行，不要对整个脚本使用 sudo。需要管理员权限时，
    脚本会自行调用 sudo 并提示输入密码。
 
    脚本会自动扫描旧版和更高版本、卸载 DPKG 管理的 1.1.0、清理已知
-   残留文件、校验 DEB、从 /tmp 安装并验证最终版本。发现高于 2.0.3
+   残留文件、校验 DEB、从 /tmp 安装并验证最终版本。发现高于 2.0.10
    的版本时，脚本会提示版本和路径，不做任何修改并直接退出。
    脚本不会删除 ~/.kimi-code 或 WebKit 网页数据。
 
 3. 也可以手工校验并安装。首先校验软件包完整性：
 
-   sha256sum -c kimi-code-arm64_2.0.3_arm64.deb.sha256
+   sha256sum -c kimi-code-arm64_2.0.10_arm64.deb.sha256
 
    正常结果应显示：
 
-   kimi-code-arm64_2.0.3_arm64.deb: 确定
-   或：kimi-code-arm64_2.0.3_arm64.deb: OK
+   kimi-code-arm64_2.0.10_arm64.deb: 确定
+   或：kimi-code-arm64_2.0.10_arm64.deb: OK
 
    如果校验失败，请重新复制软件包，不要继续安装。
 
@@ -67,12 +67,12 @@ Kimi Code ARM64 安装指南
 5. 为避免 APT 的沙箱用户 _apt 无权读取用户主目录而出现权限提示，
    先以 0644 权限将 DEB 复制到 /tmp：
 
-   install -m 0644 kimi-code-arm64_2.0.3_arm64.deb /tmp/
+   install -m 0644 kimi-code-arm64_2.0.10_arm64.deb /tmp/
 
 6. 从 /tmp 安装应用及其依赖，安装后删除临时副本：
 
-   sudo apt install /tmp/kimi-code-arm64_2.0.3_arm64.deb
-   rm -f /tmp/kimi-code-arm64_2.0.3_arm64.deb
+   sudo apt install /tmp/kimi-code-arm64_2.0.10_arm64.deb
+   rm -f /tmp/kimi-code-arm64_2.0.10_arm64.deb
 
    不需要关闭 APT 沙箱。APT 会自动安装 Python、GTK、GNOME 截图工具、
    curl 等依赖。安装过程需要输入当前用户的管理员密码。
@@ -87,8 +87,8 @@ Kimi Code ARM64 安装指南
 
    kimi-code-arm64
 
-   启动后顶部标题显示当前 Kimi Code CLI 的实际版本号，例如
-   “Kimi Code 2.8.1”；未安装 CLI 时才显示 Frame 自身版本号。
+   启动后顶部标题同时显示 Kimi Code CLI 和 Frame 的版本号，例如
+   “Kimi Code 2.8.1 · Frame 2.0.10”；未安装 CLI 时只显示 Frame 版本号。
 
 2. 如果机器已经安装 Kimi Code CLI，应用会直接启动 Web 界面。
 
@@ -169,9 +169,9 @@ Kimi Code ARM64 安装指南
 
    sudo apt update
    sudo apt --fix-broken install
-   install -m 0644 kimi-code-arm64_2.0.3_arm64.deb /tmp/
-   sudo apt install /tmp/kimi-code-arm64_2.0.3_arm64.deb
-   rm -f /tmp/kimi-code-arm64_2.0.3_arm64.deb
+   install -m 0644 kimi-code-arm64_2.0.10_arm64.deb /tmp/
+   sudo apt install /tmp/kimi-code-arm64_2.0.10_arm64.deb
+   rm -f /tmp/kimi-code-arm64_2.0.10_arm64.deb
 
    如果出现以下提示，但前面已经显示“正在设置 kimi-code-arm64”，
    这不是安装失败，而是 APT 的沙盒用户 _apt 无权读取当前目录，
@@ -187,9 +187,9 @@ Kimi Code ARM64 安装指南
 
    如果希望避免该提示，可将软件包复制到 /tmp 后再安装：
 
-   install -m 0644 kimi-code-arm64_2.0.3_arm64.deb /tmp/
-   sudo apt install /tmp/kimi-code-arm64_2.0.3_arm64.deb
-   rm -f /tmp/kimi-code-arm64_2.0.3_arm64.deb
+   install -m 0644 kimi-code-arm64_2.0.10_arm64.deb /tmp/
+   sudo apt install /tmp/kimi-code-arm64_2.0.10_arm64.deb
+   rm -f /tmp/kimi-code-arm64_2.0.10_arm64.deb
 
 2. 已安装 CLI，但应用仍提示未安装：
 

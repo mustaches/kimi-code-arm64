@@ -6,5 +6,5 @@ Exec=kimi-code-arm64
 Icon=kimi-code-arm64
 Terminal=false
 Categories=Development;IDE;
-StartupNotify=true
+StartupNotify=false
 StartupWMClass=kimi-code-arm64
