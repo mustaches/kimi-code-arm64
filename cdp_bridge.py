@@ -89,6 +89,7 @@ class CdpBridge:
         self.condition = threading.Condition()
         self.ws = None
         self.stopped = False
+        self.title = None
 
     def _log(self, message):
         if os.environ.get("KIMI_CODE_ARM64_CDP_DEBUG") != "1":
@@ -100,8 +101,9 @@ class CdpBridge:
         except OSError:
             pass
 
-    def start(self, port, url=None):
-        deadline = time.monotonic() + 30
+    def start(self, port, url=None, title=None):
+        self.title = title
+        deadline = time.monotonic() + 90
         while True:
             try:
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=3) as response:
@@ -185,8 +187,23 @@ class CdpBridge:
         try:
             self.call("Runtime.addBinding", {"name": "__kimiNativeBridge"})
             self.call("Runtime.evaluate", {"expression": BRIDGE_JS})
+            self._apply_title()
         except (OSError, TimeoutError):
             pass
+
+    def _apply_title(self):
+        if not self.title:
+            return
+        title = json.dumps(self.title, ensure_ascii=False)
+        script = f"window.__kimiSetTitle ? window.__kimiSetTitle({title}) : (document.title = {title});"
+        try:
+            self.call("Runtime.evaluate", {"expression": script})
+        except (OSError, TimeoutError):
+            pass
+
+    def set_title(self, title):
+        self.title = title
+        self._apply_title()
 
     def _on_binding(self, params):
         request = {}

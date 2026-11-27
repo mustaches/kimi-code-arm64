@@ -21,7 +21,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gio, GLib, Gtk
 
 APP_ID = "com.kimi.CodeARM64"
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.0.3"
 INSTALL_URL = "https://code.kimi.com/kimi-code/install.sh"
 LATEST_URL = "https://code.kimi.com/kimi-code/latest"
 APP_CACHE = Path.home() / ".cache/kimi-code-arm64"
@@ -381,6 +381,7 @@ class KimiApplication(Gtk.Application):
         self.chrome = None
         self.chrome_binary = None
         self.cdp = None
+        self.cli_version = None
 
     def do_activate(self):
         if self.window is not None:
@@ -394,6 +395,8 @@ class KimiApplication(Gtk.Application):
             self.window.show_missing_chrome()
             return
         self.cli_path = discover_kimi()
+        self._read_cli_version()
+        self._update_titles()
         if self.cli_path:
             self.start_server()
         else:
@@ -433,11 +436,46 @@ class KimiApplication(Gtk.Application):
             json.dumps(NATIVE_HOST_MANIFEST, indent=2)
         )
 
+    def _display_title(self):
+        if self.cli_version:
+            return f"Kimi Code {self.cli_version}"
+        return f"Kimi Code Frame({APP_VERSION})"
+
+    def _read_cli_version(self):
+        self.cli_version = None
+        if self.cli_path:
+            try:
+                self.cli_version = current_version(self.cli_path)
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                pass
+
+    def _update_titles(self):
+        title = self._display_title()
+        self.window.set_title(title)
+        self.window.header.set_title(title)
+        if self.cdp:
+            self.cdp.set_title(title)
+
+    def _configure_chrome_profile(self, profile):
+        for path in (profile / "Preferences", profile / "Default" / "Preferences"):
+            try:
+                preferences = json.loads(path.read_text())
+            except (OSError, ValueError):
+                preferences = {}
+            translate = preferences.setdefault("translate", {})
+            translate["enabled"] = False
+            blacklist = set(translate.get("translate_site_blacklist") or [])
+            blacklist.add("127.0.0.1")
+            translate["translate_site_blacklist"] = sorted(blacklist)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(preferences, ensure_ascii=False, indent=2))
+
     def launch_chrome(self, url):
         if self.chrome and self.chrome.poll() is None:
             self.chrome.terminate()
         profile = APP_CACHE / "chrome-profile"
         profile.mkdir(parents=True, exist_ok=True)
+        self._configure_chrome_profile(profile)
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             debug_port = probe.getsockname()[1]
@@ -452,7 +490,9 @@ class KimiApplication(Gtk.Application):
                 "--no-first-run",
                 "--disable-session-crashed-bubble",
                 "--disable-translate",
-                "--disable-features=Translate",
+                "--lang=zh-CN",
+                "--accept-lang=zh-CN",
+                "--disable-features=Translate,TranslateUI,LanguageDetection",
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -462,7 +502,11 @@ class KimiApplication(Gtk.Application):
         if self.cdp:
             self.cdp.stop()
         self.cdp = CdpBridge(self._show_open_dialog)
-        threading.Thread(target=self.cdp.start, args=(debug_port, url), daemon=True).start()
+        threading.Thread(
+            target=self.cdp.start,
+            args=(debug_port, url, self._display_title()),
+            daemon=True,
+        ).start()
         threading.Thread(target=self._wait_chrome, daemon=True).start()
 
     def _show_open_dialog(self, options):
@@ -531,6 +575,8 @@ class KimiApplication(Gtk.Application):
         self.operation = None
         if code == 0 and path:
             self.cli_path = path
+            self._read_cli_version()
+            self._update_titles()
             self.window.set_status("CLI 安装完成，正在启动…")
             self.start_server()
         else:
@@ -605,6 +651,8 @@ class KimiApplication(Gtk.Application):
     def _upgrade_done(self, code, output, path):
         self.operation = None
         self.cli_path = path
+        self._read_cli_version()
+        self._update_titles()
         if code == 0:
             self.window.hide_update()
             self.latest = None

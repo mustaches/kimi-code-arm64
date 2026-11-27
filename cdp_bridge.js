@@ -39,4 +39,26 @@
     desktop.showOpenDialog = (options) => call({action: "showOpenDialog", options})
         .then((result) => result || {canceled: true, filePaths: []});
     window.kimiDesktop = desktop;
+
+    const markNoTranslate = () => {
+        const meta = document.createElement("meta");
+        meta.name = "google";
+        meta.content = "notranslate";
+        (document.head || document.documentElement)?.appendChild(meta);
+        if (document.documentElement) document.documentElement.lang = "zh-CN";
+    };
+    if (document.head || document.documentElement) {
+        markNoTranslate();
+    } else {
+        document.addEventListener("DOMContentLoaded", markNoTranslate, {once: true});
+    }
+
+    window.__kimiSetTitle = (title) => {
+        if (window.__kimiTitleTimer) clearInterval(window.__kimiTitleTimer);
+        const apply = () => {
+            if (document.title !== title) document.title = title;
+        };
+        apply();
+        window.__kimiTitleTimer = setInterval(apply, 1000);
+    };
 })();
