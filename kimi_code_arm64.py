@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-import base64
-import html
 import json
 import os
 import re
 import select
 import signal
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -14,81 +13,18 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
-os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+from cdp_bridge import CdpBridge
 
 import gi
 
 gi.require_version("Gtk", "3.0")
-gi.require_version("WebKit2", "4.1")
-from gi.repository import Gio, GLib, Gtk, WebKit2
+from gi.repository import Gio, GLib, Gtk
 
 APP_ID = "com.kimi.CodeARM64"
-APP_VERSION = "1.3.0"
+APP_VERSION = "2.0.1"
 INSTALL_URL = "https://code.kimi.com/kimi-code/install.sh"
 LATEST_URL = "https://code.kimi.com/kimi-code/latest"
-APP_DATA = Path.home() / ".local/share/kimi-code-arm64"
 APP_CACHE = Path.home() / ".cache/kimi-code-arm64"
-
-SCREENSHOT_BRIDGE = r"""
-(() => {
-    const requests = new Map();
-    const desktopRequests = new Map();
-    let nextId = 0;
-    const desktop = window.kimiDesktop || {};
-    desktop.isFullscreen = () => Promise.resolve(false);
-    desktop.onFullscreenChanged = () => () => {};
-    desktop.onQuitConfirm = () => () => {};
-    desktop.onQuitConfirmCancel = () => () => {};
-    desktop.isScreenshotSupported = () => true;
-    desktop.captureScreenshot = () => new Promise((resolve) => {
-        const id = ++nextId;
-        requests.set(id, resolve);
-        try {
-            window.webkit.messageHandlers.kimiCodeScreenshot.postMessage(id);
-        } catch (_) {
-            requests.delete(id);
-            resolve({status: "error"});
-        }
-    });
-    const requestDesktop = (payload) => new Promise((resolve) => {
-        const id = ++nextId;
-        desktopRequests.set(id, resolve);
-        try {
-            window.webkit.messageHandlers.kimiCodeScreenshot.postMessage({...payload, id});
-        } catch (_) {
-            desktopRequests.delete(id);
-            resolve(null);
-        }
-    });
-    desktop.openExternal = (url) => requestDesktop({action: "openExternal", url})
-        .then((result) => result === true);
-    desktop.showOpenDialog = (options) => requestDesktop({action: "showOpenDialog", options})
-        .then((result) => result || {canceled: true, filePaths: []});
-    window.kimiDesktop = desktop;
-    window.__kimiCodeResolveDesktop = (id, result) => {
-        const resolve = desktopRequests.get(id);
-        if (!resolve) return;
-        desktopRequests.delete(id);
-        resolve(result);
-    };
-    window.__kimiCodeResolveScreenshot = (id, result) => {
-        const resolve = requests.get(id);
-        if (!resolve) return;
-        requests.delete(id);
-        if (result.status !== "ok") {
-            resolve({status: result.status});
-            return;
-        }
-        const binary = atob(result.png);
-        const bytes = new Uint8Array(binary.length);
-        for (let index = 0; index < binary.length; index++) {
-            bytes[index] = binary.charCodeAt(index);
-        }
-        resolve({status: "ok", captureId: String(id), pngBytes: bytes, comment: ""});
-    };
-})();
-"""
 
 
 def discover_kimi():
@@ -184,28 +120,6 @@ def install_native_cli(on_progress):
     )
 
 
-def page_html(title, message, busy=True):
-    spinner = '<div class="spinner"></div>' if busy else ""
-    return f"""<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-html,body{{height:100%;margin:0;background:#101114;color:#eee;font-family:sans-serif}}
-body{{display:flex;align-items:center;justify-content:center}}
-main{{text-align:center;max-width:640px;padding:40px}}
-.mark{{width:58px;height:58px;margin:0 auto 24px;border-radius:16px;background:#1565d8;color:white;font-size:34px;font-weight:700;line-height:58px}}
-h1{{font-size:22px;font-weight:600;margin:0 0 14px}}
-p{{color:#a8abb3;font-size:14px;line-height:1.7;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}}
-.spinner{{width:24px;height:24px;border:3px solid #333;border-top-color:#5b9cf6;border-radius:50%;margin:24px auto 0;animation:spin .8s linear infinite}}
-@keyframes spin{{to{{transform:rotate(360deg)}}}}
-</style>
-</head>
-<body><main><div class="mark">K</div><h1>{html.escape(title)}</h1><p>{html.escape(message)}</p>{spinner}</main></body>
-</html>"""
-
-
 class KimiServer:
     def __init__(self, cli_path, on_ready, on_failure):
         self.cli_path = cli_path
@@ -290,7 +204,7 @@ class KimiServer:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.wait(timeout=5)
+                    process.wait()
         if process is not None and process.stdout is not None:
             process.stdout.close()
         if self.log is not None:
@@ -313,17 +227,48 @@ class KimiServer:
             pass
 
 
+class StatusView(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        self.set_valign(Gtk.Align.CENTER)
+        self.set_halign(Gtk.Align.CENTER)
+        self.set_margin_start(48)
+        self.set_margin_end(48)
+        self.title = Gtk.Label()
+        self.title.get_style_context().add_class("title")
+        self.title.set_xalign(0.5)
+        self.message = Gtk.Label()
+        self.message.set_line_wrap(True)
+        self.message.set_xalign(0.5)
+        self.message.set_max_width_chars(64)
+        self.spinner = Gtk.Spinner()
+        self.pack_start(self.title, False, False, 0)
+        self.pack_start(self.message, False, False, 0)
+        self.pack_start(self.spinner, False, False, 0)
+
+    def show_status(self, title, message, busy=True):
+        self.title.set_markup(f"<b>{title}</b>")
+        self.message.set_text(message)
+        if busy:
+            self.spinner.start()
+            self.spinner.show()
+        else:
+            self.spinner.stop()
+            self.spinner.hide()
+        self.title.show()
+        self.message.show()
+
+
 class KimiWindow(Gtk.ApplicationWindow):
     def __init__(self, application):
         super().__init__(application=application)
         self.application = application
-        self.server_origin = None
         self.set_title(f"Kimi Code Frame({APP_VERSION})")
-        self.set_default_size(1280, 800)
+        self.set_default_size(640, 360)
 
         self.header = Gtk.HeaderBar(
             title=f"Kimi Code Frame({APP_VERSION})",
-            subtitle="ARM64 桌面集成",
+            subtitle="ARM64 桌面集成 · Chrome 应用窗口",
         )
         self.header.set_show_close_button(True)
         self.update_button = Gtk.Button(label="升级 Kimi Code CLI")
@@ -338,147 +283,9 @@ class KimiWindow(Gtk.ApplicationWindow):
         self.header.pack_end(self.action_button)
         self.set_titlebar(self.header)
 
-        data_dir = APP_DATA / "webkit"
-        cache_dir = APP_CACHE / "webkit"
-        data_dir.mkdir(parents=True, exist_ok=True)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        data_manager = WebKit2.WebsiteDataManager(
-            base_data_directory=str(data_dir),
-            base_cache_directory=str(cache_dir),
-        )
-        context = WebKit2.WebContext(website_data_manager=data_manager)
-        content_manager = WebKit2.UserContentManager()
-        content_manager.register_script_message_handler("kimiCodeScreenshot")
-        content_manager.add_script(WebKit2.UserScript(
-            SCREENSHOT_BRIDGE,
-            WebKit2.UserContentInjectedFrames.TOP_FRAME,
-            WebKit2.UserScriptInjectionTime.START,
-        ))
-        content_manager.connect(
-            "script-message-received::kimiCodeScreenshot",
-            self._on_screenshot_request,
-        )
-        self.webview = WebKit2.WebView(
-            web_context=context,
-            user_content_manager=content_manager,
-        )
-        settings = self.webview.get_settings()
-        settings.set_enable_smooth_scrolling(
-            os.environ.get("KIMI_CODE_ARM64_SMOOTH_SCROLL") == "1"
-        )
-        self.add(self.webview)
+        self.status = StatusView()
+        self.add(self.status)
         self.connect("delete-event", self._on_delete)
-
-    def _on_screenshot_request(self, _manager, message):
-        uri = urllib.parse.urlsplit(self.webview.get_uri() or "")
-        if (uri.scheme, uri.hostname, uri.port) != self.server_origin:
-            return
-        try:
-            request = json.loads(message.get_js_value().to_json(0))
-        except (TypeError, ValueError):
-            return
-        if isinstance(request, int):
-            threading.Thread(
-                target=self._capture_screenshot,
-                args=(request,),
-                daemon=True,
-            ).start()
-            return
-        if not isinstance(request, dict) or not isinstance(request.get("id"), int):
-            return
-        request_id = request["id"]
-        action = request.get("action")
-        if action == "openExternal":
-            threading.Thread(
-                target=self._open_external,
-                args=(request_id, request.get("url")),
-                daemon=True,
-            ).start()
-        elif action == "showOpenDialog":
-            self._show_open_dialog(request_id, request.get("options") or {})
-
-    def _open_external(self, request_id, url):
-        try:
-            uri = urllib.parse.urlsplit(url)
-            if uri.scheme not in {"http", "https"} or not uri.hostname:
-                result = False
-            else:
-                result = Gio.AppInfo.launch_default_for_uri(url, None)
-        except (AttributeError, TypeError, GLib.Error):
-            result = False
-        GLib.idle_add(self._resolve_desktop, request_id, result)
-
-    def _show_open_dialog(self, request_id, options):
-        properties = options.get("properties") or []
-        open_directory = "openDirectory" in properties
-        action = (
-            Gtk.FileChooserAction.SELECT_FOLDER
-            if open_directory
-            else Gtk.FileChooserAction.OPEN
-        )
-        dialog = Gtk.FileChooserNative.new(
-            str(options.get("title") or "选择文件"),
-            self,
-            action,
-            "选择",
-            "取消",
-        )
-        dialog.set_select_multiple("multiSelections" in properties)
-        dialog.set_show_hidden("showHiddenFiles" in properties)
-        default_path = options.get("defaultPath")
-        if default_path:
-            dialog.set_filename(str(default_path))
-        response = dialog.run()
-        paths = list(dialog.get_filenames()) if response == Gtk.ResponseType.ACCEPT else []
-        dialog.destroy()
-        self._resolve_desktop(request_id, {
-            "canceled": response != Gtk.ResponseType.ACCEPT,
-            "filePaths": paths,
-        })
-
-    def _resolve_desktop(self, request_id, result):
-        script = (
-            f"window.__kimiCodeResolveDesktop?.("
-            f"{json.dumps(request_id)}, {json.dumps(result)});"
-        )
-        self.webview.evaluate_javascript(script, len(script), None, None, None)
-        return False
-
-    def _capture_screenshot(self, request_id):
-        path = APP_CACHE / f"screenshot-{time.time_ns()}.png"
-        try:
-            completed = subprocess.run(
-                ["gnome-screenshot", "--area", "--file", str(path)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=300,
-            )
-            if completed.returncode != 0:
-                result = {"status": "error"}
-            elif not path.is_file():
-                result = {"status": "cancel"}
-            else:
-                result = {
-                    "status": "ok",
-                    "png": base64.b64encode(path.read_bytes()).decode("ascii"),
-                }
-        except (OSError, subprocess.SubprocessError):
-            result = {"status": "error"}
-        finally:
-            try:
-                path.unlink()
-            except OSError:
-                pass
-        GLib.idle_add(self._resolve_screenshot, request_id, result)
-
-    def _resolve_screenshot(self, request_id, result):
-        script = (
-            f"window.__kimiCodeResolveScreenshot?.("
-            f"{json.dumps(request_id)}, {json.dumps(result)});"
-        )
-        self.webview.evaluate_javascript(script, len(script), None, None, None)
-        return False
 
     def show_missing(self, message=""):
         self.update_button.hide()
@@ -489,49 +296,56 @@ class KimiWindow(Gtk.ApplicationWindow):
         self.action_button.get_style_context().add_class("suggested-action")
         self.header.set_subtitle("需要安装 Kimi Code CLI")
         detail = message or "应用需要联网下载官方最新版 CLI。安装完成后会自动启动，终端窗口保持隐藏。"
-        self.webview.load_html(page_html("尚未安装 Kimi Code CLI", detail, False), None)
+        self.status.show_status("尚未安装 Kimi Code CLI", detail, False)
+
+    def show_missing_chrome(self):
+        self.update_button.hide()
+        self.action_button.hide()
+        self.header.set_subtitle("需要 Chrome 或 Chromium")
+        self.status.show_status(
+            "未找到 Chrome / Chromium",
+            "从 2.0.0 起，界面由本机 Chrome 应用窗口提供，不再使用 WebKit。"
+            "请先安装 Google Chrome 或 Chromium，然后重新启动应用。",
+            False,
+        )
 
     def show_starting(self):
+        self.present()
         self.action_button.hide()
         self.action_button.set_sensitive(True)
         self.action_button.set_label("退出kimi code")
         self.action_button.get_style_context().add_class("destructive-action")
         self.action_button.get_style_context().remove_class("suggested-action")
         self.header.set_subtitle("CLI 已在后台启动，终端不可见")
-        self.webview.load_html(page_html("正在启动 Kimi Code", "正在准备 Web 界面…"), None)
+        self.status.show_status("正在启动 Kimi Code", "正在准备 Web 界面…")
+
+    def show_chrome_ready(self):
+        self.action_button.show()
+        self.action_button.set_sensitive(True)
+        self.action_button.set_label("退出kimi code")
+        self.header.set_subtitle("Chrome 应用窗口模式")
+        self.status.show_status(
+            "Kimi Web 已在 Chrome 应用窗口中打开",
+            "在 Chrome 窗口中阅读和继续会话。\n关闭 Chrome 窗口或点击右上角“退出kimi code”均可安全退出。",
+            False,
+        )
 
     def show_operation(self, title, message, button_label):
+        self.present()
         self.action_button.set_sensitive(False)
         self.action_button.set_label(button_label)
         self.update_button.set_sensitive(False)
-        self.webview.load_html(page_html(title, message), None)
+        self.status.show_status(title, message)
 
     def show_progress(self, message):
         if self.application.operation in {"install", "upgrade"}:
             self.header.set_subtitle(message[-160:])
         return False
 
-    def server_ready(self, url):
-        if self.application.operation != "exit":
-            uri = urllib.parse.urlsplit(url)
-            self.server_origin = (uri.scheme, uri.hostname, uri.port)
-            if self.application.backend == "chrome":
-                self.webview.load_html(page_html(
-                    "Kimi Web 已在 Chrome 应用窗口中打开",
-                    "使用 Chrome 窗口阅读与会话。关闭 Chrome 窗口或点击右上角“退出kimi code”均可安全退出。",
-                    False,
-                ), None)
-                self.header.set_subtitle("Chrome 应用窗口模式 · 截屏按钮在此模式下不可用")
-                self.application.launch_chrome(url)
-            else:
-                self.webview.load_uri(url)
-            self.action_button.set_sensitive(True)
-            self.action_button.set_label("退出kimi code")
-        return False
-
     def server_failed(self, message):
         if self.application.operation != "exit":
-            self.webview.load_html(page_html("Kimi Code 启动失败", message, False), None)
+            self.present()
+            self.status.show_status("Kimi Code 启动失败", message, False)
             self.action_button.set_sensitive(True)
         return False
 
@@ -540,6 +354,7 @@ class KimiWindow(Gtk.ApplicationWindow):
         return False
 
     def show_update(self, version):
+        self.present()
         self.update_button.set_label(f"升级到 {version}")
         self.update_button.set_sensitive(True)
         self.update_button.show()
@@ -563,21 +378,21 @@ class KimiApplication(Gtk.Application):
         self.latest = None
         self.operation = None
         self.checking_updates = False
-        self.backend = os.environ.get("KIMI_CODE_ARM64_BACKEND", "webkit").strip().lower()
         self.chrome = None
         self.chrome_binary = None
+        self.cdp = None
 
     def do_activate(self):
         if self.window is not None:
             self.window.present()
             return
-        if self.backend == "chrome":
-            self.chrome_binary = discover_chrome()
-            if not self.chrome_binary:
-                self.backend = "webkit"
+        self.chrome_binary = discover_chrome()
         self.window = KimiWindow(self)
         self.window.show_all()
         self.window.update_button.hide()
+        if not self.chrome_binary:
+            self.window.show_missing_chrome()
+            return
         self.cli_path = discover_kimi()
         if self.cli_path:
             self.start_server()
@@ -599,24 +414,44 @@ class KimiApplication(Gtk.Application):
 
     def start_server(self, check=True):
         self.window.show_starting()
-        self.server = KimiServer(self.cli_path, self.window.server_ready, self.window.server_failed)
+        self.server = KimiServer(self.cli_path, self._server_ready, self.window.server_failed)
         self.server.start()
         if check:
             self.check_updates()
+
+    def _server_ready(self, url):
+        if self.operation != "exit":
+            self.window.show_chrome_ready()
+            self.launch_chrome(url)
+            self.window.hide()
+        return False
+
+    def _install_native_host_manifest(self):
+        directory = APP_CACHE / "chrome-profile" / "NativeMessagingHosts"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "com.kimi.CodeARM64.json").write_text(
+            json.dumps(NATIVE_HOST_MANIFEST, indent=2)
+        )
 
     def launch_chrome(self, url):
         if self.chrome and self.chrome.poll() is None:
             self.chrome.terminate()
         profile = APP_CACHE / "chrome-profile"
         profile.mkdir(parents=True, exist_ok=True)
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            debug_port = probe.getsockname()[1]
+        initial_url = f"http://127.0.0.1:{debug_port}/json/version"
         self.chrome = subprocess.Popen(
             [
                 self.chrome_binary,
-                f"--app={url}",
+                f"--app={initial_url}",
                 f"--user-data-dir={profile}",
+                f"--remote-debugging-port={debug_port}",
                 "--window-size=1280,800",
                 "--no-first-run",
                 "--disable-session-crashed-bubble",
+                "--disable-translate",
                 "--disable-features=Translate",
             ],
             stdin=subprocess.DEVNULL,
@@ -624,7 +459,48 @@ class KimiApplication(Gtk.Application):
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+        if self.cdp:
+            self.cdp.stop()
+        self.cdp = CdpBridge(self._show_open_dialog)
+        threading.Thread(target=self.cdp.start, args=(debug_port, url), daemon=True).start()
         threading.Thread(target=self._wait_chrome, daemon=True).start()
+
+    def _show_open_dialog(self, options):
+        done = threading.Event()
+        box = {}
+
+        def run():
+            properties = options.get("properties") or []
+            action = (
+                Gtk.FileChooserAction.SELECT_FOLDER
+                if "openDirectory" in properties
+                else Gtk.FileChooserAction.OPEN
+            )
+            dialog = Gtk.FileChooserNative.new(
+                str(options.get("title") or "选择文件"),
+                self.window,
+                action,
+                "打开",
+                "取消",
+            )
+            dialog.set_select_multiple("multiSelections" in properties)
+            dialog.set_show_hidden("showHiddenFiles" in properties)
+            default_path = options.get("defaultPath")
+            if default_path:
+                dialog.set_filename(default_path)
+            response = dialog.run()
+            paths = dialog.get_filenames() if response == Gtk.ResponseType.ACCEPT else []
+            dialog.destroy()
+            box["result"] = {
+                "canceled": response != Gtk.ResponseType.ACCEPT,
+                "filePaths": paths,
+            }
+            done.set()
+            return False
+
+        GLib.idle_add(run)
+        done.wait(timeout=300)
+        return box.get("result", {"canceled": True, "filePaths": []})
 
     def _wait_chrome(self):
         process = self.chrome
@@ -760,6 +636,8 @@ class KimiApplication(Gtk.Application):
             self.finish_exit()
 
     def finish_exit(self):
+        if self.cdp:
+            self.cdp.stop()
         self.quit()
         return False
 

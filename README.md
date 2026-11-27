@@ -2,9 +2,10 @@
 
 一个面向 ARM64 Debian / Ubuntu 的非官方 Kimi Code 桌面集成应用。
 
-它使用原生 GTK 3 + WebKitGTK 窗口，将 Kimi Code CLI 和 Kimi Web 集成在一起，提供桌面应用的使用体验，同时保留 CLI 的会话、账号和模型配置。
+它通过本机 Chrome 应用窗口展示 Kimi Web 界面，GTK 窗口负责状态显示与控制，将 Kimi Code CLI 和 Kimi Web 集成在一起，提供桌面应用的使用体验，同时保留 CLI 的会话、账号和模型配置。
 
 > 本项目不是 Kimi 官方 Desktop，也不修改或替代 Kimi Code 模型服务。核心能力由官方 Kimi Code CLI 提供。
+> 2.0.1 起已完全移除 WebKitGTK 后端，界面统一由 Chrome 应用窗口提供；区域截屏和文件对话框通过 Chrome DevTools 原生桥接保留。
 
 ## 为什么做这个项目
 
@@ -20,39 +21,24 @@ ARM64 用户通常只能使用终端界面，存在以下不便：
 本项目的解决思路不是模拟 x86_64，也不是重新实现 Kimi Code，而是组合已经支持 ARM64 的官方组件：
 
 ```text
-原生 GTK 窗口
+原生 GTK 状态/控制窗口
     └── 后台启动官方 Kimi Code CLI
             └── CLI 启动本机 Kimi Web 服务
-                    └── WebKitGTK 在窗口内显示 Web 界面
+                    └── Chrome 应用窗口显示 Web 界面
 ```
 
-这样既保留官方 CLI 的能力和更新机制，也提供原生 ARM64 图形界面。项目已在多台 ARM64 实体机器上完成安装和运行验证。
+这样既保留官方 CLI 的能力和更新机制，也提供与官方浏览器一致的界面体验。项目已在多台 ARM64 实体机器上完成安装和运行验证。
 
 ## 主要功能
 
-### 原生 ARM64 图形界面
+### Chrome 应用窗口界面
 
-- 使用系统 GTK 3 和 WebKitGTK，不依赖 Electron。
-- 不需要 x86_64 模拟、Rosetta 或 QEMU。
-- 在应用菜单中提供“Kimi Code ARM64”启动入口。
-- 适配不同 Linux 用户名，不硬编码用户主目录。
-- 针对部分 NVIDIA ARM64 设备的 WebKit 渲染问题，默认禁用 DMA-BUF 和硬件合成。
-
-### 可选 Chrome 应用窗口后端（1.3.0 新增）
-
-部分设备上 WebKitGTK 与 Kimi Web 的虚拟滚动列表存在兼容性问题（滚动跳变、回滚）。1.3.0 起可以改用本机已安装的 Chrome / Chromium 作为界面后端：
-
-```bash
-KIMI_CODE_ARM64_BACKEND=chrome kimi-code-arm64
-```
-
-- 界面在与官方浏览器一致的环境中运行，滚动、渲染行为与直接用浏览器打开 `kimi web` 相同。
+- 使用本机已安装的 Chrome / Chromium 显示 Web 界面，滚动、渲染行为与直接用浏览器打开 `kimi web` 完全一致。
 - 使用独立配置目录 `~/.cache/kimi-code-arm64/chrome-profile`，不影响日常 Chrome 配置；首次打开需完成一次欢迎向导。
+- 在应用菜单中提供“Kimi Code ARM64”启动入口。正常使用只显示一个无地址栏的 Chrome 应用窗口；GTK 控制窗口自动隐藏，安装、升级或出错时显示，也可通过应用图标重新唤出。
 - 关闭 Chrome 窗口或 GTK 状态窗口都会触发同样的安全退出流程，本地服务随窗口关闭。
-- 此模式下输入框的“截屏”按钮不可用（截屏桥接仅在 WebKit 模式提供），其余会话、账号、升级功能一致。
-- 未安装 Chrome / Chromium 时自动回退到 WebKit 模式。
-
-如需永久启用，将应用菜单启动命令改为 `env KIMI_CODE_ARM64_BACKEND=chrome kimi-code-arm64`，或在 `~/.local/share/applications/` 中放置同名 desktop 文件覆盖。
+- 未安装 Chrome / Chromium 时，状态窗口会提示先安装浏览器，不会回退到 WebKit。
+- 区域截屏和文件选择对话框通过 Chrome DevTools 原生桥接实现，不依赖 WebKit 或 Chrome 扩展。
 
 ### 自动安装 Kimi Code CLI
 
@@ -82,12 +68,12 @@ KIMI_CODE_ARM64_BACKEND=chrome kimi-code-arm64
 
 为避免会话占用冲突，不建议 CLI 和 Web 同时向同一会话发送任务。
 
-### 区域截屏
+### 区域截屏与桌面桥接
 
-- 输入框的“添加”菜单提供“截屏”入口。
-- 点击后使用系统截图工具框选区域，截图会自动作为 PNG 附件添加到当前输入框。
-- 按 Esc 或取消系统截图选择时不会添加附件。
-- 临时截图在读取后立即删除，不会残留在应用缓存中。
+- 输入框的“添加”菜单提供“截屏”入口，点击后使用系统截图工具框选区域，截图自动作为 PNG 附件添加到当前输入框。
+- 按 Esc 或取消系统截图选择时不会添加附件，临时截图在读取后立即删除。
+- 通过 Chrome DevTools Protocol 在本机回环地址与专用 Chrome 实例通信，不加载 Chrome 扩展，不需要 x86_64 模拟或 QEMU。
+- 支持网页“打开文件”对话框和外部链接打开，行为与 1.x 一致。
 
 ### 安全退出
 
@@ -107,6 +93,7 @@ KIMI_CODE_ARM64_BACKEND=chrome kimi-code-arm64
 
 - 架构：ARM64，`uname -m` 输出 `aarch64` 或 `arm64`
 - 系统：Debian / Ubuntu
+- 浏览器：本机已安装 Google Chrome 或 Chromium（2.0.1 起必需）
 - 安装包：DEB
 - 网络：安装 APT 依赖、安装或升级 CLI、使用模型服务时均需要联网
 - 账号：使用官方模型需要相应的 Kimi 账号权限或会员权益，也可以按 Web 界面提示配置可用模型服务
@@ -129,8 +116,8 @@ cd kimi-code-arm64/dist
 也可以只将以下三个文件下载或复制到目标机器的同一目录：
 
 ```text
-kimi-code-arm64_1.3.0_arm64.deb
-kimi-code-arm64_1.3.0_arm64.deb.sha256
+kimi-code-arm64_2.0.1_arm64.deb
+kimi-code-arm64_2.0.1_arm64.deb.sha256
 install.txt
 ```
 
@@ -157,7 +144,7 @@ arm64
 在 DEB 和 SHA-256 文件所在目录执行：
 
 ```bash
-sha256sum -c kimi-code-arm64_1.3.0_arm64.deb.sha256
+sha256sum -c kimi-code-arm64_2.0.1_arm64.deb.sha256
 ```
 
 应显示 `OK` 或“确定/成功”。如果校验失败，请重新获取安装包，不要继续安装。
@@ -168,12 +155,12 @@ sha256sum -c kimi-code-arm64_1.3.0_arm64.deb.sha256
 
 ```bash
 sudo apt update
-install -m 0644 kimi-code-arm64_1.3.0_arm64.deb /tmp/
-sudo apt install /tmp/kimi-code-arm64_1.3.0_arm64.deb
-rm -f /tmp/kimi-code-arm64_1.3.0_arm64.deb
+install -m 0644 kimi-code-arm64_2.0.1_arm64.deb /tmp/
+sudo apt install /tmp/kimi-code-arm64_2.0.1_arm64.deb
+rm -f /tmp/kimi-code-arm64_2.0.1_arm64.deb
 ```
 
-不需要关闭 APT 沙箱。APT 会安装 Python、PyGObject、GTK、WebKitGTK、GNOME 截图工具、curl 和证书等依赖。
+不需要关闭 APT 沙箱。APT 会安装 Python、PyGObject、GTK、curl 和证书等依赖。界面显示需要本机已安装 Chrome 或 Chromium（不在 DEB 依赖中强制安装）。
 
 ## 首次启动
 
@@ -246,7 +233,7 @@ cd kimi-code-arm64
 构建结果：
 
 ```text
-dist/kimi-code-arm64_1.3.0_arm64.deb
+dist/kimi-code-arm64_2.0.1_arm64.deb
 ```
 
 DEB 不包含 CLI。首次启动后由应用在线安装官方 CLI，因此分发包体积较小。
@@ -256,6 +243,8 @@ DEB 不包含 CLI。首次启动后由应用在线安装官方 CLI，因此分�
 ```text
 kimi-code-arm64/
 ├── kimi_code_arm64.py          # GTK 应用、CLI 安装升级和 Web 生命周期管理
+├── cdp_bridge.py               # Chrome DevTools 客户端、截屏与外链处理
+├── cdp_bridge.js               # 注入 Kimi Web 的桌面桥接
 ├── kimi-code-arm64.desktop     # Linux 应用菜单入口
 ├── kimi-code-arm64.svg         # 应用图标
 ├── build-deb.sh                # DEB 构建脚本
@@ -263,29 +252,33 @@ kimi-code-arm64/
 │   ├── control                 # DEB 元数据和运行依赖
 │   └── kimi-code-arm64         # 系统启动命令
 └── dist/
-    ├── kimi-code-arm64_1.3.0_arm64.deb
-    ├── kimi-code-arm64_1.3.0_arm64.deb.sha256
+    ├── kimi-code-arm64_2.0.1_arm64.deb
+    ├── kimi-code-arm64_2.0.1_arm64.deb.sha256
     └── install.txt             # 独立安装说明
 ```
 
 ## 故障排查
 
-### 主对话框滚轮滚动卡顿、跳变或回滚
+### 界面滚动、渲染异常
 
-1.2.1 起默认关闭 WebKitGTK 的平滑滚动动画。该动画会与 Kimi Web 聊天列表在 scroll 事件中的 `scrollTop` 校正相互打断，表现为每格滚轮只移动几像素、向下滚动被回滚。关闭后每格滚动步长稳定。
+2.0.1 起界面统一由 Chrome 应用窗口提供，行为与直接用浏览器打开 `kimi web` 一致，不再受 WebKitGTK 与 Kimi Web 虚拟滚动列表兼容性问题（滚动跳变、回滚）影响。如果菜单启动后仍出现旧式内嵌窗口，请确认已安装 2.0.1 并完全退出旧实例后再启动。
 
-如需恢复系统默认行为，启动前设置环境变量 `KIMI_CODE_ARM64_SMOOTH_SCROLL=1`。
+### 提示未找到 Chrome / Chromium
 
-若滚动仍不稳定（虚拟列表在 WebKitGTK 下的兼容性问题），可改用 `KIMI_CODE_ARM64_BACKEND=chrome` 的 Chrome 应用窗口后端，行为与官方浏览器一致。
+2.0.1 需要本机 Chrome 或 Chromium 显示界面。安装后重新启动应用即可：
+
+```bash
+google-chrome --version
+```
 
 ### APT 依赖问题
 
 ```bash
 sudo apt update
 sudo apt --fix-broken install
-install -m 0644 kimi-code-arm64_1.3.0_arm64.deb /tmp/
-sudo apt install /tmp/kimi-code-arm64_1.3.0_arm64.deb
-rm -f /tmp/kimi-code-arm64_1.3.0_arm64.deb
+install -m 0644 kimi-code-arm64_2.0.1_arm64.deb /tmp/
+sudo apt install /tmp/kimi-code-arm64_2.0.1_arm64.deb
+rm -f /tmp/kimi-code-arm64_2.0.1_arm64.deb
 ```
 
 ### `_apt` 无权读取本地 DEB
