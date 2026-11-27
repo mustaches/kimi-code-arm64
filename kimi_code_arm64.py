@@ -21,7 +21,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gio, GLib, Gtk
 
 APP_ID = "com.kimi.CodeARM64"
-APP_VERSION = "2.0.10"
+APP_VERSION = "2.0.14"
 INSTALL_URL = "https://code.kimi.com/kimi-code/install.sh"
 LATEST_URL = "https://code.kimi.com/kimi-code/latest"
 APP_CACHE = Path.home() / ".cache/kimi-code-arm64"
@@ -47,6 +47,9 @@ def discover_chrome():
         path = shutil.which(name)
         if path:
             return path
+    snap_chromium = Path("/snap/bin/chromium")
+    if snap_chromium.is_file() and os.access(snap_chromium, os.X_OK):
+        return str(snap_chromium)
     return None
 
 
@@ -298,16 +301,19 @@ class KimiWindow(Gtk.ApplicationWindow):
         detail = message or "应用需要联网下载官方最新版 CLI。安装完成后会自动启动，终端窗口保持隐藏。"
         self.status.show_status("尚未安装 Kimi Code CLI", detail, False)
 
-    def show_missing_chrome(self):
+    def show_missing_chrome(self, message=""):
         self.update_button.hide()
-        self.action_button.hide()
+        self.action_button.show()
+        self.action_button.set_sensitive(True)
+        self.action_button.set_label("安装 Google Chrome")
+        self.action_button.get_style_context().remove_class("destructive-action")
+        self.action_button.get_style_context().add_class("suggested-action")
         self.header.set_subtitle("需要 Chrome 或 Chromium")
-        self.status.show_status(
-            "未找到 Chrome / Chromium",
-            "从 2.0.0 起，界面由本机 Chrome 应用窗口提供，不再使用 WebKit。"
-            "请先安装 Google Chrome 或 Chromium，然后重新启动应用。",
-            False,
+        detail = message or (
+            "将从 Google 官方下载并安装 Chrome stable ARM64。"
+            "点击“安装 Google Chrome”开始，安装完成后会自动打开 Kimi Web。"
         )
+        self.status.show_status("未找到 Chrome / Chromium", detail, False)
 
     def show_starting(self):
         self.present()
@@ -338,7 +344,7 @@ class KimiWindow(Gtk.ApplicationWindow):
         self.status.show_status(title, message)
 
     def show_progress(self, message):
-        if self.application.operation in {"install", "upgrade"}:
+        if self.application.operation in {"install", "upgrade", "install-chrome"}:
             self.header.set_subtitle(message[-160:])
         return False
 
@@ -382,6 +388,7 @@ class KimiApplication(Gtk.Application):
         self.chrome_binary = None
         self.cdp = None
         self.cli_version = None
+        self.tasks_started = False
 
     def do_activate(self):
         if self.window is not None:
@@ -391,6 +398,7 @@ class KimiApplication(Gtk.Application):
         self.window = KimiWindow(self)
         self.window.show_all()
         self.window.update_button.hide()
+        self._ensure_background_tasks()
         if not self.chrome_binary:
             self.window.show_missing_chrome()
             return
@@ -401,6 +409,12 @@ class KimiApplication(Gtk.Application):
             self.start_server()
         else:
             self.window.show_missing()
+        self._ensure_background_tasks()
+
+    def _ensure_background_tasks(self):
+        if self.tasks_started:
+            return
+        self.tasks_started = True
         GLib.timeout_add_seconds(21600, self._periodic_update_check)
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self._on_unix_signal)
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, self._on_unix_signal)
@@ -429,10 +443,94 @@ class KimiApplication(Gtk.Application):
         return False
 
     def primary_action(self):
-        if self.cli_path:
+        if not self.chrome_binary:
+            self.install_chrome()
+        elif self.cli_path:
             self.request_exit()
         else:
             self.install_cli()
+
+    def install_chrome(self):
+        if self.operation or self.chrome_binary:
+            return
+        self.operation = "install-chrome"
+        self.window.show_operation(
+            "正在安装 Google Chrome",
+            "正在从 Google 官方下载 Chrome stable ARM64，随后通过 APT 安装。需要管理员授权时，请在系统对话框中确认。",
+            "正在安装…",
+        )
+        threading.Thread(target=self._install_chrome_worker, daemon=True).start()
+
+    def _download_chrome_installer(self):
+        url = "https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb"
+        path = Path(f"/tmp/kimi-code-arm64-chrome-{os.getpid()}.deb")
+        request = urllib.request.Request(url, headers={"User-Agent": f"Kimi-Code-ARM64/{APP_VERSION}"})
+        downloaded = 0
+        with urllib.request.urlopen(request, timeout=30) as response:
+            total = int(response.headers.get("Content-Length") or 0)
+            with path.open("wb") as output:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        progress = f"正在下载 Google Chrome stable ARM64：{downloaded * 100 // total}%"
+                    else:
+                        progress = f"正在下载 Google Chrome stable ARM64：{downloaded // 1024 // 1024} MB"
+                    GLib.idle_add(self.window.show_progress, progress)
+        os.chmod(path, 0o644)
+        return path
+
+    def _install_chrome_worker(self):
+        if not shutil.which("apt-get"):
+            GLib.idle_add(self._install_chrome_done, 1, "未找到 apt-get 包管理器")
+            return
+        try:
+            installer = self._download_chrome_installer()
+        except Exception as error:
+            GLib.idle_add(self._install_chrome_done, 1, f"下载失败：{error}")
+            return
+        privilege = ["pkexec"] if shutil.which("pkexec") else ["sudo", "-n"]
+        try:
+            code, output = run_stream(
+                privilege + ["apt-get", "install", "-y", str(installer)],
+                "chrome-install.log",
+                self.window.show_progress,
+            )
+            if code == 0 and discover_chrome():
+                GLib.idle_add(self._install_chrome_done, 0, output)
+                return
+            GLib.idle_add(self._install_chrome_done, code or 1, output)
+        except Exception as error:
+            GLib.idle_add(self._install_chrome_done, 1, str(error))
+        finally:
+            try:
+                installer.unlink()
+            except OSError:
+                pass
+
+    def _install_chrome_done(self, code, output):
+        self.operation = None
+        self.chrome_binary = discover_chrome()
+        if code == 0 and self.chrome_binary:
+            self.cli_path = discover_kimi()
+            self._read_cli_version()
+            self._update_titles()
+            if self.cli_path:
+                self.start_server()
+            else:
+                self.window.show_missing()
+        else:
+            detail = (
+                "浏览器安装未完成。请检查网络或手动执行：\n"
+                "curl -fLO https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb\n"
+                "sudo apt install ./google-chrome-stable_current_arm64.deb\n\n"
+                f"{output[-500:]}\n\n日志：{APP_CACHE / 'chrome-install.log'}"
+            )
+            self.window.show_missing_chrome(detail)
+        return False
 
     def start_server(self, check=True):
         self.window.show_starting()
@@ -501,6 +599,7 @@ class KimiApplication(Gtk.Application):
             probe.bind(("127.0.0.1", 0))
             debug_port = probe.getsockname()[1]
         initial_url = f"http://127.0.0.1:{debug_port}/json/version"
+        chrome_log = (APP_CACHE / "chrome.log").open("a")
         self.chrome = subprocess.Popen(
             [
                 self.chrome_binary,
@@ -517,10 +616,11 @@ class KimiApplication(Gtk.Application):
                 "--disable-features=Translate,TranslateUI,LanguageDetection",
             ],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=chrome_log,
+            stderr=chrome_log,
             start_new_session=True,
         )
+        chrome_log.close()
         if self.cdp:
             self.cdp.stop()
         self.cdp = CdpBridge(self._show_open_dialog)
@@ -570,12 +670,30 @@ class KimiApplication(Gtk.Application):
 
     def _wait_chrome(self):
         process = self.chrome
-        process.wait()
+        return_code = process.wait()
         if self.operation != "exit" and self.chrome is process:
-            GLib.idle_add(self._chrome_exited)
+            if return_code == 0:
+                GLib.idle_add(self._chrome_exited)
+            else:
+                GLib.idle_add(self._chrome_failed, return_code)
 
     def _chrome_exited(self):
         self.request_exit()
+        return False
+
+    def _chrome_failed(self, return_code):
+        self.window.present()
+        self.window.action_button.show()
+        self.window.action_button.set_sensitive(True)
+        self.window.action_button.set_label("退出kimi code")
+        self.window.header.set_subtitle(f"Chrome 启动失败，退出码 {return_code}")
+        self.window.status.show_status(
+            "Chrome 启动失败",
+            f"浏览器进程异常退出（退出码 {return_code}）。\n"
+            f"请查看日志：{APP_CACHE / 'chrome.log'}\n"
+            "可以先关闭本窗口排查浏览器安装，也可以点击“退出kimi code”安全退出。",
+            False,
+        )
         return False
 
     def install_cli(self):
@@ -693,7 +811,7 @@ class KimiApplication(Gtk.Application):
     def request_exit(self):
         if self.operation == "exit":
             return
-        if self.operation in {"install", "upgrade"}:
+        if self.operation in {"install", "upgrade", "install-chrome"}:
             self.window.set_status("请等待安装或升级完成后再退出")
             return
         self.operation = "exit"

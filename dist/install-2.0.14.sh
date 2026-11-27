@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGET_VERSION="2.0.10"
+TARGET_VERSION="2.0.14"
 PACKAGE="kimi-code-arm64"
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 DEB_NAME="${PACKAGE}_${TARGET_VERSION}_arm64.deb"

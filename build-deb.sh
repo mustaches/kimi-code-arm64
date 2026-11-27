@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-VERSION=2.0.10
+VERSION=2.0.14
 PACKAGE=kimi-code-arm64
 OUTPUT="$ROOT/dist/${PACKAGE}_${VERSION}_arm64.deb"
 STAGING=$(mktemp -d)
